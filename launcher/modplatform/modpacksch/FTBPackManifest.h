@@ -67,7 +67,6 @@ struct Art
     int height;
     bool compressed;
     QString sha1;
-    int size;
     int64_t updated;
 };
 
@@ -100,7 +99,6 @@ struct Modpack
     int installs;
     int plays;
     int64_t updated;
-    int64_t refreshed;
     QVector<Art> art;
     QVector<Author> authors;
     QVector<VersionInfo> versions;
@@ -131,7 +129,6 @@ struct VersionFile
     QString version;
     QString url;
     QString sha1;
-    int size;
     bool clientOnly;
     bool serverOnly;
     bool optional;
