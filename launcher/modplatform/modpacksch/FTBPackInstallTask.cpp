@@ -162,7 +162,7 @@ void PackInstallTask::resolveMods()
         index++;
     }
 
-    m_mod_id_resolver_task.reset(new Flame::FileResolvingTask(APPLICATION->network(), manifest));
+    m_mod_id_resolver_task.reset(new Flame::FileResolvingTask(manifest));
 
     connect(m_mod_id_resolver_task.get(), &Flame::FileResolvingTask::succeeded, this, &PackInstallTask::onResolveModsSucceeded);
     connect(m_mod_id_resolver_task.get(), &Flame::FileResolvingTask::failed, this, &PackInstallTask::onResolveModsFailed);
