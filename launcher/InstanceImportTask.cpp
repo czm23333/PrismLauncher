@@ -72,7 +72,6 @@ bool InstanceImportTask::abort()
     bool wasAborted = false;
     if (m_task)
         wasAborted = m_task->abort();
-    Task::abort();
     return wasAborted;
 }
 
@@ -305,7 +304,7 @@ void InstanceImportTask::processFlame()
     connect(inst_creation_task.get(), &Task::status, this, &InstanceImportTask::setStatus);
     connect(inst_creation_task.get(), &Task::details, this, &InstanceImportTask::setDetails);
 
-    connect(inst_creation_task.get(), &Task::aborted, this, &Task::abort);
+    connect(inst_creation_task.get(), &Task::aborted, this, &InstanceImportTask::emitAborted);
     connect(inst_creation_task.get(), &Task::abortStatusChanged, this, &Task::setAbortable);
 
     m_task.reset(inst_creation_task);
@@ -378,8 +377,8 @@ void InstanceImportTask::processModrinth()
     } else {
         QString pack_id;
         if (!m_sourceUrl.isEmpty()) {
-            QRegularExpression regex(R"(data\/([^\/]*)\/versions)");
-            pack_id = regex.match(m_sourceUrl.toString()).captured(1);
+            static const QRegularExpression s_regex(R"(data\/([^\/]*)\/versions)");
+            pack_id = s_regex.match(m_sourceUrl.toString()).captured(1);
         }
 
         // FIXME: Find a way to get the ID in directly imported ZIPs
@@ -404,7 +403,7 @@ void InstanceImportTask::processModrinth()
     connect(inst_creation_task.get(), &Task::status, this, &InstanceImportTask::setStatus);
     connect(inst_creation_task.get(), &Task::details, this, &InstanceImportTask::setDetails);
 
-    connect(inst_creation_task.get(), &Task::aborted, this, &Task::abort);
+    connect(inst_creation_task.get(), &Task::aborted, this, &InstanceImportTask::emitAborted);
     connect(inst_creation_task.get(), &Task::abortStatusChanged, this, &Task::setAbortable);
 
     m_task.reset(inst_creation_task);

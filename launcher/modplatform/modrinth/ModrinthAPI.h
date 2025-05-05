@@ -12,21 +12,21 @@
 
 class ModrinthAPI : public NetworkResourceAPI {
    public:
-    auto currentVersion(QString hash, QString hash_format, std::shared_ptr<QByteArray> response) -> Task::Ptr;
+    Task::Ptr currentVersion(QString hash, QString hash_format, std::shared_ptr<QByteArray> response);
 
-    auto currentVersions(const QStringList& hashes, QString hash_format, std::shared_ptr<QByteArray> response) -> Task::Ptr;
+    Task::Ptr currentVersions(const QStringList& hashes, QString hash_format, std::shared_ptr<QByteArray> response);
 
-    auto latestVersion(QString hash,
-                       QString hash_format,
-                       std::optional<std::list<Version>> mcVersions,
-                       std::optional<ModPlatform::ModLoaderTypes> loaders,
-                       std::shared_ptr<QByteArray> response) -> Task::Ptr;
+    Task::Ptr latestVersion(QString hash,
+                            QString hash_format,
+                            std::optional<std::list<Version>> mcVersions,
+                            std::optional<ModPlatform::ModLoaderTypes> loaders,
+                            std::shared_ptr<QByteArray> response);
 
-    auto latestVersions(const QStringList& hashes,
-                        QString hash_format,
-                        std::optional<std::list<Version>> mcVersions,
-                        std::optional<ModPlatform::ModLoaderTypes> loaders,
-                        std::shared_ptr<QByteArray> response) -> Task::Ptr;
+    Task::Ptr latestVersions(const QStringList& hashes,
+                             QString hash_format,
+                             std::optional<std::list<Version>> mcVersions,
+                             std::optional<ModPlatform::ModLoaderTypes> loaders,
+                             std::shared_ptr<QByteArray> response);
 
     Task::Ptr getProjects(QStringList addonIds, std::shared_ptr<QByteArray> response) const override;
 
@@ -81,6 +81,21 @@ class ModrinthAPI : public NetworkResourceAPI {
         if (side == "server")
             return QString("\"server_side:required\",\"server_side:optional\"],[\"client_side:optional\",\"client_side:unsupported\"");
         return {};
+    }
+
+    [[nodiscard]] static inline QString mapMCVersionFromModrinth(QString v)
+    {
+        static const QString preString = " Pre-Release ";
+        bool pre = false;
+        if (v.contains("-pre")) {
+            pre = true;
+            v.replace("-pre", preString);
+        }
+        v.replace("-", " ");
+        if (pre) {
+            v.replace(" Pre Release ", preString);
+        }
+        return v;
     }
 
    private:
@@ -174,7 +189,7 @@ class ModrinthAPI : public NetworkResourceAPI {
     {
         QString s;
         for (auto& ver : mcVersions) {
-            s += QString("\"versions:%1\",").arg(ver.toString());
+            s += QString("\"versions:%1\",").arg(mapMCVersionToModrinth(ver));
         }
         s.remove(s.length() - 1, 1);  // remove last comma
         return s.isEmpty() ? QString() : s;
@@ -191,7 +206,7 @@ class ModrinthAPI : public NetworkResourceAPI {
                                                      : QString("%1/project/%2/version?game_versions=[\"%3\"]&loaders=[\"%4\"]")
                                                            .arg(BuildConfig.MODRINTH_PROD_URL)
                                                            .arg(args.dependency.addonId.toString())
-                                                           .arg(args.mcVersion.toString())
+                                                           .arg(mapMCVersionToModrinth(args.mcVersion))
                                                            .arg(getModLoaderStrings(args.loader).join("\",\""));
     };
 };

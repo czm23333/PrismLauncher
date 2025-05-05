@@ -164,22 +164,20 @@ bool ResourceFolderModel::installResource(QString original_path)
     return false;
 }
 
-bool ResourceFolderModel::installResourceWithFlameMetadata(QString path, ModPlatform::IndexedVersion& vers)
+void ResourceFolderModel::installResourceWithFlameMetadata(QString path, ModPlatform::IndexedVersion& vers)
 {
+    auto install = [this, path] { installResource(std::move(path)); };
     if (vers.addonId.isValid()) {
         ModPlatform::IndexedPack pack{
             vers.addonId,
             ModPlatform::ResourceProvider::FLAME,
         };
 
-        QEventLoop loop;
-
         auto response = std::make_shared<QByteArray>();
         auto job = FlameAPI().getProject(vers.addonId.toString(), response);
-
-        QObject::connect(job.get(), &Task::failed, [&loop] { loop.quit(); });
-        QObject::connect(job.get(), &Task::aborted, &loop, &QEventLoop::quit);
-        QObject::connect(job.get(), &Task::succeeded, [response, this, &vers, &loop, &pack] {
+        QObject::connect(job.get(), &Task::failed, this, install);
+        QObject::connect(job.get(), &Task::aborted, this, install);
+        QObject::connect(job.get(), &Task::succeeded, [response, this, &vers, install, &pack] {
             QJsonParseError parse_error{};
             QJsonDocument doc = QJsonDocument::fromJson(*response, &parse_error);
             if (parse_error.error != QJsonParseError::NoError) {
@@ -196,16 +194,14 @@ bool ResourceFolderModel::installResourceWithFlameMetadata(QString path, ModPlat
                 qWarning() << "Error while reading mod info: " << e.cause();
             }
             LocalResourceUpdateTask update_metadata(indexDir(), pack, vers);
-            QObject::connect(&update_metadata, &Task::finished, &loop, &QEventLoop::quit);
+            QObject::connect(&update_metadata, &Task::finished, this, install);
             update_metadata.start();
         });
 
         job->start();
-
-        loop.exec();
+    } else {
+        install();
     }
-
-    return installResource(std::move(path));
 }
 
 bool ResourceFolderModel::uninstallResource(QString file_name, bool preserve_metadata)
@@ -367,16 +363,11 @@ void ResourceFolderModel::onUpdateSucceeded()
 
     auto& new_resources = update_results->resources;
 
-#if QT_VERSION >= QT_VERSION_CHECK(5, 14, 0)
     auto current_list = m_resources_index.keys();
     QSet<QString> current_set(current_list.begin(), current_list.end());
 
     auto new_list = new_resources.keys();
     QSet<QString> new_set(new_list.begin(), new_list.end());
-#else
-    QSet<QString> current_set(m_resources_index.keys().toSet());
-    QSet<QString> new_set(new_resources.keys().toSet());
-#endif
 
     applyUpdates(current_set, new_set, new_resources);
 }
@@ -517,12 +508,9 @@ QVariant ResourceFolderModel::data(const QModelIndex& index, int role) const
             return {};
         }
         case Qt::CheckStateRole:
-            switch (column) {
-                case ActiveColumn:
-                    return m_resources[row]->enabled() ? Qt::Checked : Qt::Unchecked;
-                default:
-                    return {};
-            }
+            if (column == ActiveColumn)
+                return m_resources[row]->enabled() ? Qt::Checked : Qt::Unchecked;
+            return {};
         default:
             return {};
     }
@@ -600,8 +588,7 @@ void ResourceFolderModel::setupHeaderAction(QAction* act, int column)
 void ResourceFolderModel::saveColumns(QTreeView* tree)
 {
     auto const setting_name = QString("UI/%1_Page/Columns").arg(id());
-    auto setting = (m_instance->settings()->contains(setting_name)) ? m_instance->settings()->getSetting(setting_name)
-                                                                    : m_instance->settings()->registerSetting(setting_name);
+    auto setting = m_instance->settings()->getOrRegisterSetting(setting_name);
 
     setting->set(tree->header()->saveState());
 }
@@ -613,8 +600,7 @@ void ResourceFolderModel::loadColumns(QTreeView* tree)
     }
 
     auto const setting_name = QString("UI/%1_Page/Columns").arg(id());
-    auto setting = (m_instance->settings()->contains(setting_name)) ? m_instance->settings()->getSetting(setting_name)
-                                                                    : m_instance->settings()->registerSetting(setting_name);
+    auto setting = m_instance->settings()->getOrRegisterSetting(setting_name);
 
     tree->header()->restoreState(setting->get().toByteArray());
 }

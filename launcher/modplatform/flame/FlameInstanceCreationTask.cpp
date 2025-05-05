@@ -227,6 +227,11 @@ bool FlameCreationTask::updateInstance()
                 QString relative_path(FS::PathCombine(file.targetFolder, file.version.fileName));
                 qDebug() << "Scheduling" << relative_path << "for removal";
                 m_files_to_remove.append(old_minecraft_dir.absoluteFilePath(relative_path));
+                if (relative_path.endsWith(".disabled")) {  // remove it if it was enabled/disabled by user
+                    m_files_to_remove.append(old_minecraft_dir.absoluteFilePath(relative_path.chopped(9)));
+                } else {
+                    m_files_to_remove.append(old_minecraft_dir.absoluteFilePath(relative_path + ".disabled"));
+                }
             }
         });
         connect(job.get(), &Task::failed, this, [](QString reason) { qCritical() << "Failed to get files: " << reason; });
@@ -386,7 +391,8 @@ bool FlameCreationTask::createInstance()
 
     // Hack to correct some 'special sauce'...
     if (mcVersion.endsWith('.')) {
-        mcVersion.remove(QRegularExpression("[.]+$"));
+        static const QRegularExpression s_regex("[.]+$");
+        mcVersion.remove(s_regex);
         logWarning(tr("Mysterious trailing dots removed from Minecraft version while importing pack."));
     }
 
@@ -437,7 +443,7 @@ bool FlameCreationTask::createInstance()
 
     instance.setName(name());
 
-    m_modIdResolver.reset(new Flame::FileResolvingTask(APPLICATION->network(), m_pack));
+    m_modIdResolver.reset(new Flame::FileResolvingTask(m_pack));
     connect(m_modIdResolver.get(), &Flame::FileResolvingTask::succeeded, this, [this, &loop] { idResolverSucceeded(loop); });
     connect(m_modIdResolver.get(), &Flame::FileResolvingTask::failed, [this, &loop](QString reason) {
         m_modIdResolver.reset();
