@@ -39,8 +39,6 @@
 #include <QtConcurrent>
 #include <algorithm>
 
-#include <quazip/quazip.h>
-
 #include "FileSystem.h"
 #include "Json.h"
 #include "MMCZip.h"
@@ -91,9 +89,9 @@ void PackInstallTask::executeTask()
         QString(BuildConfig.ATL_DOWNLOAD_SERVER_URL + "packs/%1/versions/%2/Configs.json").arg(m_pack_safe_name).arg(m_version_name);
     netJob->addNetAction(Net::ApiDownload::makeByteArray(QUrl(searchUrl), response));
 
-    QObject::connect(netJob.get(), &NetJob::succeeded, this, &PackInstallTask::onDownloadSucceeded);
-    QObject::connect(netJob.get(), &NetJob::failed, this, &PackInstallTask::onDownloadFailed);
-    QObject::connect(netJob.get(), &NetJob::aborted, this, &PackInstallTask::onDownloadAborted);
+    connect(netJob.get(), &NetJob::succeeded, this, &PackInstallTask::onDownloadSucceeded);
+    connect(netJob.get(), &NetJob::failed, this, &PackInstallTask::onDownloadFailed);
+    connect(netJob.get(), &NetJob::aborted, this, &PackInstallTask::onDownloadAborted);
 
     jobPtr = netJob;
     jobPtr->start();
@@ -391,7 +389,7 @@ QString PackInstallTask::getVersionForLoader(QString uid)
     return m_version.loader.version;
 }
 
-QString PackInstallTask::detectLibrary(VersionLibrary library)
+QString PackInstallTask::detectLibrary(const VersionLibrary& library)
 {
     // Try to detect what the library is
     if (!library.server.isEmpty() && library.server.split("/").length() >= 3) {
@@ -434,14 +432,15 @@ bool PackInstallTask::createLibrariesComponent(QString instanceRoot, std::shared
     QList<GradleSpecifier> exempt;
     for (const auto& componentUid : componentsToInstall.keys()) {
         auto componentVersion = componentsToInstall.value(componentUid);
-
-        for (const auto& library : componentVersion->data()->libraries) {
-            GradleSpecifier lib(library->rawName());
-            exempt.append(lib);
+        if (componentVersion->data()) {
+            for (const auto& library : componentVersion->data()->libraries) {
+                GradleSpecifier lib(library->rawName());
+                exempt.append(lib);
+            }
         }
     }
 
-    {
+    if (minecraftVersion->data()) {
         for (const auto& library : minecraftVersion->data()->libraries) {
             GradleSpecifier lib(library->rawName());
             exempt.append(lib);
@@ -582,10 +581,12 @@ bool PackInstallTask::createPackComponent(QString instanceRoot, std::shared_ptr<
     for (const auto& componentUid : componentsToInstall.keys()) {
         auto componentVersion = componentsToInstall.value(componentUid);
 
-        if (componentVersion->data()->mainClass != QString("")) {
-            mainClasses.append(componentVersion->data()->mainClass);
+        if (componentVersion->data()) {
+            if (componentVersion->data()->mainClass != QString("")) {
+                mainClasses.append(componentVersion->data()->mainClass);
+            }
+            tweakers.append(componentVersion->data()->addTweakers);
         }
-        tweakers.append(componentVersion->data()->addTweakers);
     }
 
     auto f = std::make_shared<VersionFile>();
@@ -672,13 +673,6 @@ void PackInstallTask::extractConfigs()
     setStatus(tr("Extracting configs..."));
 
     QDir extractDir(m_stagingPath);
-
-    QuaZip packZip(archivePath);
-    if (!packZip.open(QuaZip::mdUnzip)) {
-        emitFailed(tr("Failed to open pack configs %1!").arg(archivePath));
-        return;
-    }
-
     m_extractFuture = QtConcurrent::run(QThreadPool::globalInstance(), QOverload<QString, QString>::of(MMCZip::extractDir), archivePath,
                                         extractDir.absolutePath() + "/minecraft");
     connect(&m_extractFutureWatcher, &QFutureWatcher<QStringList>::finished, this, [this]() { downloadMods(); });

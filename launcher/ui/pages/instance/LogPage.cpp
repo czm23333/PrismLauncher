@@ -60,7 +60,7 @@ QVariant LogFormatProxyModel::data(const QModelIndex& index, int role) const
         case Qt::FontRole:
             return m_font;
         case Qt::ForegroundRole: {
-            auto level = static_cast<MessageLevel::Enum>(QIdentityProxyModel::data(index, LogModel::LevelRole).toInt());
+            auto level = static_cast<MessageLevel>(QIdentityProxyModel::data(index, LogModel::LevelRole).toInt());
             QColor result = colors.foreground.value(level);
 
             if (result.isValid())
@@ -69,7 +69,7 @@ QVariant LogFormatProxyModel::data(const QModelIndex& index, int role) const
             break;
         }
         case Qt::BackgroundRole: {
-            auto level = static_cast<MessageLevel::Enum>(QIdentityProxyModel::data(index, LogModel::LevelRole).toInt());
+            auto level = static_cast<MessageLevel>(QIdentityProxyModel::data(index, LogModel::LevelRole).toInt());
             QColor result = colors.background.value(level);
 
             if (result.isValid())
@@ -131,7 +131,6 @@ QModelIndex LogFormatProxyModel::find(const QModelIndex& start, const QString& v
 LogPage::LogPage(InstancePtr instance, QWidget* parent) : QWidget(parent), ui(new Ui::LogPage), m_instance(instance)
 {
     ui->setupUi(this);
-    ui->tabWidget->tabBar()->hide();
 
     m_proxy = new LogFormatProxyModel(this);
 
@@ -158,12 +157,12 @@ LogPage::LogPage(InstancePtr instance, QWidget* parent) : QWidget(parent), ui(ne
     }
 
     auto findShortcut = new QShortcut(QKeySequence(QKeySequence::Find), this);
-    connect(findShortcut, SIGNAL(activated()), SLOT(findActivated()));
+    connect(findShortcut, &QShortcut::activated, this, &LogPage::findActivated);
     auto findNextShortcut = new QShortcut(QKeySequence(QKeySequence::FindNext), this);
-    connect(findNextShortcut, SIGNAL(activated()), SLOT(findNextActivated()));
-    connect(ui->searchBar, SIGNAL(returnPressed()), SLOT(on_findButton_clicked()));
+    connect(findNextShortcut, &QShortcut::activated, this, &LogPage::findNextActivated);
+    connect(ui->searchBar, &QLineEdit::returnPressed, this, &LogPage::on_findButton_clicked);
     auto findPreviousShortcut = new QShortcut(QKeySequence(QKeySequence::FindPrevious), this);
-    connect(findPreviousShortcut, SIGNAL(activated()), SLOT(findPreviousActivated()));
+    connect(findPreviousShortcut, &QShortcut::activated, this, &LogPage::findPreviousActivated);
 }
 
 LogPage::~LogPage()

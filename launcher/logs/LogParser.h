@@ -16,7 +16,7 @@
  *  along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  */
-
+#pragma once
 #include <QAnyStringView>
 #include <QDateTime>
 #include <QList>
@@ -31,7 +31,7 @@ class LogParser {
    public:
     struct LogEntry {
         QString logger;
-        MessageLevel::Enum level;
+        MessageLevel level;
         QString levelText;
         QDateTime timestamp;
         QString thread;
@@ -59,7 +59,7 @@ class LogParser {
     std::optional<Error> getError();
 
     /// guess log level from a line of game log
-    static MessageLevel::Enum guessLevel(const QString& line, MessageLevel::Enum level);
+    static MessageLevel guessLevel(const QString& line);
 
    protected:
     std::optional<LogEntry> parseAttributes();

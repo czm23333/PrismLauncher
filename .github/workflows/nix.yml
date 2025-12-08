@@ -2,6 +2,9 @@ name: Nix
 
 on:
   push:
+    branches:
+      - "develop"
+      - "release-*"
     tags:
       - "*"
     paths:
@@ -9,19 +12,20 @@ on:
       - "**.cpp"
       - "**.h"
       - "**.java"
+      - "**.ui"
 
       # Build files
       - "**.nix"
-      - "nix/"
+      - "nix/**"
       - "flake.lock"
 
       # Directories
-      - "buildconfig/"
-      - "cmake/"
-      - "launcher/"
-      - "libraries/"
-      - "program_info/"
-      - "tests/"
+      - "buildconfig/**"
+      - "cmake/**"
+      - "launcher/**"
+      - "libraries/**"
+      - "program_info/**"
+      - "tests/**"
 
       # Files
       - "CMakeLists.txt"
@@ -29,24 +33,26 @@ on:
 
       # Workflows
       - ".github/workflows/nix.yml"
-  pull_request_target:
+  pull_request:
     paths:
       # File types
       - "**.cpp"
       - "**.h"
+      - "**.java"
+      - "**.ui"
 
       # Build files
       - "**.nix"
-      - "nix/"
+      - "nix/**"
       - "flake.lock"
 
       # Directories
-      - "buildconfig/"
-      - "cmake/"
-      - "launcher/"
-      - "libraries/"
-      - "program_info/"
-      - "tests/"
+      - "buildconfig/**"
+      - "cmake/**"
+      - "launcher/**"
+      - "libraries/**"
+      - "program_info/**"
+      - "tests/**"
 
       # Files
       - "CMakeLists.txt"
@@ -61,7 +67,6 @@ permissions:
 
 env:
   DEBUG: ${{ github.ref_type != 'tag' }}
-  USE_DETERMINATE: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
@@ -77,7 +82,7 @@ jobs:
           - os: ubuntu-22.04-arm
             system: aarch64-linux
 
-          - os: macos-13
+          - os: macos-15-intel
             system: x86_64-darwin
 
           - os: macos-14
@@ -85,33 +90,20 @@ jobs:
 
     runs-on: ${{ matrix.os }}
 
-    permissions:
-      id-token: write
-
     steps:
-      - name: Get merge commit
-        if: ${{ github.event_name == 'pull_request_target' }}
-        id: merge-commit
-        uses: PrismLauncher/PrismLauncher/.github/actions/get-merge-commit@develop
-        with:
-          pull-request-id: ${{ github.event.number }}
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ steps.merge-commit.outputs.merge-commit-sha || github.sha }}
+        uses: actions/checkout@v6
 
       - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@v17
-        with:
-          determinate: ${{ env.USE_DETERMINATE }}
+        uses: cachix/install-nix-action@v31
 
         # For PRs
       - name: Setup Nix Magic Cache
-        if: ${{ env.USE_DETERMINATE == 'true' }}
-        uses: DeterminateSystems/flakehub-cache-action@v1
+        if: ${{ github.event_name == 'pull_request' }}
+        uses: DeterminateSystems/magic-nix-cache-action@v13
+        with:
+          diagnostic-endpoint: ""
+          use-flakehub: false
 
         # For in-tree builds
       - name: Setup Cachix

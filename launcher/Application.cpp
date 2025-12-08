@@ -46,12 +46,11 @@
 #include "DataMigrationTask.h"
 #include "java/JavaInstallList.h"
 #include "net/PasteUpload.h"
-#include "pathmatcher/MultiMatcher.h"
-#include "pathmatcher/SimplePrefixMatcher.h"
 #include "tasks/Task.h"
 #include "tools/GenericProfiler.h"
 #include "ui/InstanceWindow.h"
 #include "ui/MainWindow.h"
+#include "ui/ViewLogWindow.h"
 
 #include "ui/dialogs/ProgressDialog.h"
 #include "ui/instanceview/AccessibleInstanceView.h"
@@ -59,6 +58,7 @@
 #include "ui/pages/BasePageProvider.h"
 #include "ui/pages/global/APIPage.h"
 #include "ui/pages/global/AccountListPage.h"
+#include "ui/pages/global/AppearancePage.h"
 #include "ui/pages/global/ExternalToolsPage.h"
 #include "ui/pages/global/JavaPage.h"
 #include "ui/pages/global/LanguagePage.h"
@@ -108,8 +108,6 @@
 #include "icons/IconList.h"
 #include "net/HttpMetaCache.h"
 
-#include "java/JavaInstallList.h"
-
 #include "updater/ExternalUpdater.h"
 
 #include "tools/JProfiler.h"
@@ -128,7 +126,6 @@
 
 #include <stdlib.h>
 #include <sys.h>
-#include <QStringLiteral>
 #include "SysInfo.h"
 
 #ifdef Q_OS_LINUX
@@ -243,8 +240,11 @@ void appDebugOutput(QtMsgType type, const QMessageLogContext& context, const QSt
     }
 
     QString out = qFormatLogMessage(type, context, msg);
-    out += QChar::LineFeed;
+    if (APPLICATION->logModel) {
+        APPLICATION->logModel->append(messageLevelFromQtMsgType(type), out);
+    }
 
+    out += QChar::LineFeed;
     APPLICATION->logFile->write(out.toUtf8());
     APPLICATION->logFile->flush();
 
@@ -371,7 +371,25 @@ Application::Application(int& argc, char** argv) : QApplication(argc, argv)
     }
 
     QString origcwdPath = QDir::currentPath();
+#if defined(Q_OS_LINUX)
+    const QString binFilePath = applicationFilePath();
+    const bool isAppImage = binFilePath.startsWith("/tmp/.mount_");
+    // Yes, this can technically trigger the logic below if someone makes an AppImage with an actual launcher exe named "ld-linux"
+    // Please don't :)
+    const bool executedFromLinker = QFileInfo(binFilePath).fileName().startsWith("ld-linux");
+
+    // NOTE(@getchoo): In order for `go-appimage` to generate self-contained AppImages, it executes apps from a bundled linker at
+    // <root>/lib64
+    // This is not the path to our actual binary, which we want
+    QString binPath;
+    if (isAppImage && executedFromLinker) {
+        binPath = FS::PathCombine(applicationDirPath(), "../usr/bin");
+    } else {
+        binPath = applicationDirPath();
+    }
+#else
     QString binPath = applicationDirPath();
+#endif
 
     {
         // Root path is used for updates and portable data
@@ -537,6 +555,8 @@ Application::Application(int& argc, char** argv) : QApplication(argc, argv)
         qInstallMessageHandler(appDebugOutput);
         qSetMessagePattern(defaultLogFormat);
 
+        logModel.reset(new LogModel(this));
+
         bool foundLoggingRules = false;
 
         auto logRulesFile = QStringLiteral("qtlogging.ini");
@@ -690,6 +710,10 @@ Application::Application(int& argc, char** argv) : QApplication(argc, argv)
         m_settings->registerSetting("ConsoleMaxLines", 100000);
         m_settings->registerSetting("ConsoleOverflowStop", true);
 
+        logModel->setMaxLines(getConsoleMaxLines(settings()));
+        logModel->setStopOnOverflow(shouldStopOnConsoleOverflow(settings()));
+        logModel->setOverflowMessage(tr("Cannot display this log since the log length surpassed %1 lines.").arg(logModel->getMaxLines()));
+
         // Folders
         m_settings->registerSetting("InstanceDir", "instances");
         m_settings->registerSetting({ "CentralModsDir", "ModsDir" }, "mods");
@@ -699,6 +723,16 @@ Application::Application(int& argc, char** argv) : QApplication(argc, argv)
         m_settings->registerSetting("MoveModsFromDownloadsDir", false);
         m_settings->registerSetting("SkinsDir", "skins");
         m_settings->registerSetting("JavaDir", "java");
+
+#ifdef Q_OS_MACOS
+        // Folder security-scoped bookmarks
+        m_settings->registerSetting("InstanceDirBookmark", "");
+        m_settings->registerSetting("CentralModsDirBookmark", "");
+        m_settings->registerSetting("IconsDirBookmark", "");
+        m_settings->registerSetting("DownloadsDirBookmark", "");
+        m_settings->registerSetting("SkinsDirBookmark", "");
+        m_settings->registerSetting("JavaDirBookmark", "");
+#endif
 
         // Editors
         m_settings->registerSetting("JsonEditor", QString());
@@ -785,6 +819,7 @@ Application::Application(int& argc, char** argv) : QApplication(argc, argv)
         // The cat
         m_settings->registerSetting("TheCat", false);
         m_settings->registerSetting("CatOpacity", 100);
+        m_settings->registerSetting("CatFit", "fit");
 
         m_settings->registerSetting("StatusBarVisible", true);
 
@@ -814,6 +849,11 @@ Application::Application(int& argc, char** argv) : QApplication(argc, argv)
         m_settings->registerSetting("RPDownloadGeometry", "");
         m_settings->registerSetting("TPDownloadGeometry", "");
         m_settings->registerSetting("ShaderDownloadGeometry", "");
+        m_settings->registerSetting("DataPackDownloadGeometry", "");
+
+        // data pack window
+        // in future, more pages may be added - so this name is chosen to avoid needing migration
+        m_settings->registerSetting("WorldManagementGeometry", "");
 
         // HACK: This code feels so stupid is there a less stupid way of doing this?
         {
@@ -847,12 +887,21 @@ Application::Application(int& argc, char** argv) : QApplication(argc, argv)
             // get rid of invalid meta urls
             if (!metaUrl.isValid() || (metaUrl.scheme() != "http" && metaUrl.scheme() != "https"))
                 m_settings->reset("MetaURLOverride");
+
+            // Resource URL
+            m_settings->registerSetting("ResourceURL", BuildConfig.DEFAULT_RESOURCE_BASE);
+
+            QUrl resourceUrl(m_settings->get("ResourceURL").toString());
+
+            // get rid of invalid resource urls
+            if (!resourceUrl.isValid() || (resourceUrl.scheme() != "http" && resourceUrl.scheme() != "https"))
+                m_settings->reset("ResourceURL");
         }
 
         m_settings->registerSetting("CloseAfterLaunch", false);
         m_settings->registerSetting("QuitAfterGameStop", false);
 
-        m_settings->registerSetting("Env", QVariant(QMap<QString, QVariant>()));
+        m_settings->registerSetting("Env", "{}");
 
         // Custom Microsoft Authentication Client ID
         m_settings->registerSetting("MSAClientIDOverride", "");
@@ -881,13 +930,14 @@ Application::Application(int& argc, char** argv) : QApplication(argc, argv)
         {
             m_globalSettingsProvider = std::make_shared<GenericPageProvider>(tr("Settings"));
             m_globalSettingsProvider->addPage<LauncherPage>();
+            m_globalSettingsProvider->addPage<LanguagePage>();
+            m_globalSettingsProvider->addPage<AppearancePage>();
             m_globalSettingsProvider->addPage<MinecraftPage>();
             m_globalSettingsProvider->addPage<JavaPage>();
-            m_globalSettingsProvider->addPage<LanguagePage>();
-            m_globalSettingsProvider->addPage<ProxyPage>();
-            m_globalSettingsProvider->addPage<ExternalToolsPage>();
             m_globalSettingsProvider->addPage<AccountListPage>();
             m_globalSettingsProvider->addPage<APIPage>();
+            m_globalSettingsProvider->addPage<ExternalToolsPage>();
+            m_globalSettingsProvider->addPage<ProxyPage>();
         }
 
         PixmapCache::setInstance(new PixmapCache(this));
@@ -934,12 +984,27 @@ Application::Application(int& argc, char** argv) : QApplication(argc, argv)
     // Themes
     m_themeManager = std::make_unique<ThemeManager>();
 
+#ifdef Q_OS_MACOS
+    // for macOS: getting directory settings will generate URL security-scoped bookmarks if needed and not present
+    // this facilitates a smooth transition from a non-sandboxed version of the launcher, that likely can access the directory,
+    // and a sandboxed version that can't access the directory without a bookmark
+    // this section can likely be removed once the sandboxed version has been released for a while and migrations aren't done anymore
+    {
+        m_settings->get("InstanceDir");
+        m_settings->get("CentralModsDir");
+        m_settings->get("IconsDir");
+        m_settings->get("DownloadsDir");
+        m_settings->get("SkinsDir");
+        m_settings->get("JavaDir");
+    }
+#endif
+
     // initialize and load all instances
     {
         auto InstDirSetting = m_settings->getSetting("InstanceDir");
         // instance path: check for problems with '!' in instance path and warn the user in the log
         // and remember that we have to show him a dialog when the gui starts (if it does so)
-        QString instDir = InstDirSetting->get().toString();
+        QString instDir = m_settings->get("InstanceDir").toString();
         qInfo() << "Instance path              : " << instDir;
         if (FS::checkProblemticPathJava(QDir(instDir))) {
             qWarning() << "Your instance path contains \'!\' and this is known to cause java problems!";
@@ -1464,12 +1529,9 @@ std::shared_ptr<JavaInstallList> Application::javalist()
     return m_javalist;
 }
 
-QIcon Application::getThemedIcon(const QString& name)
+QIcon Application::logo()
 {
-    if (name == "logo") {
-        return QIcon(":/" + BuildConfig.LAUNCHER_SVGFILENAME);
-    }
-    return QIcon::fromTheme(name);
+    return QIcon(":/" + BuildConfig.LAUNCHER_SVGFILENAME);
 }
 
 bool Application::openJsonEditor(const QString& filename)
@@ -1591,7 +1653,7 @@ void Application::updateIsRunning(bool running)
 
 void Application::controllerSucceeded()
 {
-    auto controller = qobject_cast<LaunchController*>(QObject::sender());
+    auto controller = qobject_cast<LaunchController*>(sender());
     if (!controller)
         return;
     auto id = controller->id();
@@ -1618,7 +1680,7 @@ void Application::controllerSucceeded()
 void Application::controllerFailed(const QString& error)
 {
     Q_UNUSED(error);
-    auto controller = qobject_cast<LaunchController*>(QObject::sender());
+    auto controller = qobject_cast<LaunchController*>(sender());
     if (!controller)
         return;
     auto id = controller->id();
@@ -1645,9 +1707,9 @@ void Application::ShowGlobalSettings(class QWidget* parent, QString open_page)
     {
         SettingsObject::Lock lock(APPLICATION->settings());
         PageDialog dlg(m_globalSettingsProvider.get(), open_page, parent);
+        connect(&dlg, &PageDialog::applied, this, &Application::globalSettingsApplied);
         dlg.exec();
     }
-    emit globalSettingsClosed();
 }
 
 MainWindow* Application::showMainWindow(bool minimized)
@@ -1658,8 +1720,8 @@ MainWindow* Application::showMainWindow(bool minimized)
         m_mainWindow->activateWindow();
     } else {
         m_mainWindow = new MainWindow();
-        m_mainWindow->restoreState(QByteArray::fromBase64(APPLICATION->settings()->get("MainWindowState").toByteArray()));
-        m_mainWindow->restoreGeometry(QByteArray::fromBase64(APPLICATION->settings()->get("MainWindowGeometry").toByteArray()));
+        m_mainWindow->restoreState(QByteArray::fromBase64(APPLICATION->settings()->get("MainWindowState").toString().toUtf8()));
+        m_mainWindow->restoreGeometry(QByteArray::fromBase64(APPLICATION->settings()->get("MainWindowGeometry").toString().toUtf8()));
 
         if (minimized) {
             m_mainWindow->showMinimized();
@@ -1673,6 +1735,20 @@ MainWindow* Application::showMainWindow(bool minimized)
         m_openWindows++;
     }
     return m_mainWindow;
+}
+
+ViewLogWindow* Application::showLogWindow()
+{
+    if (m_viewLogWindow) {
+        m_viewLogWindow->setWindowState(m_viewLogWindow->windowState() & ~Qt::WindowMinimized);
+        m_viewLogWindow->raise();
+        m_viewLogWindow->activateWindow();
+    } else {
+        m_viewLogWindow = new ViewLogWindow();
+        connect(m_viewLogWindow, &ViewLogWindow::isClosing, this, &Application::on_windowClose);
+        m_openWindows++;
+    }
+    return m_viewLogWindow;
 }
 
 InstanceWindow* Application::showInstanceWindow(InstancePtr instance, QString page)
@@ -1716,7 +1792,7 @@ InstanceWindow* Application::showInstanceWindow(InstancePtr instance, QString pa
 void Application::on_windowClose()
 {
     m_openWindows--;
-    auto instWindow = qobject_cast<InstanceWindow*>(QObject::sender());
+    auto instWindow = qobject_cast<InstanceWindow*>(sender());
     if (instWindow) {
         QMutexLocker locker(&m_instanceExtrasMutex);
         auto& extras = m_instanceExtras[instWindow->instanceId()];
@@ -1725,9 +1801,13 @@ void Application::on_windowClose()
             extras.controller->setParentWidget(m_mainWindow);
         }
     }
-    auto mainWindow = qobject_cast<MainWindow*>(QObject::sender());
+    auto mainWindow = qobject_cast<MainWindow*>(sender());
     if (mainWindow) {
         m_mainWindow = nullptr;
+    }
+    auto logWindow = qobject_cast<ViewLogWindow*>(sender());
+    if (logWindow) {
+        m_viewLogWindow = nullptr;
     }
     // quit when there are no more windows.
     if (shouldExitNow()) {
@@ -1883,17 +1963,6 @@ QString Application::getUserAgent()
     return BuildConfig.USER_AGENT;
 }
 
-QString Application::getUserAgentUncached()
-{
-    QString uaOverride = m_settings->get("UserAgentOverride").toString();
-    if (!uaOverride.isEmpty()) {
-        uaOverride += " (Uncached)";
-        return uaOverride.replace("$LAUNCHER_VER", BuildConfig.printableVersionString());
-    }
-
-    return BuildConfig.USER_AGENT_UNCACHED;
-}
-
 bool Application::handleDataMigration(const QString& currentData,
                                       const QString& oldData,
                                       const QString& name,
@@ -1939,7 +2008,9 @@ bool Application::handleDataMigration(const QString& currentData,
 
     auto setDoNotMigrate = [&nomigratePath] {
         QFile file(nomigratePath);
-        file.open(QIODevice::WriteOnly);
+        if (!file.open(QIODevice::WriteOnly)) {
+            qWarning() << "setDoNotMigrate failed; Failed to open file '" << file.fileName() << "' for writing!";
+        }
     };
 
     // create no-migrate file if user doesn't want to migrate
@@ -1951,22 +2022,23 @@ bool Application::handleDataMigration(const QString& currentData,
 
     if (!currentExists) {
         // Migrate!
-        auto matcher = std::make_shared<MultiMatcher>();
-        matcher->add(std::make_shared<SimplePrefixMatcher>(configFile));
-        matcher->add(std::make_shared<SimplePrefixMatcher>(
-            BuildConfig.LAUNCHER_CONFIGFILE));  // it's possible that we already used that directory before
-        matcher->add(std::make_shared<SimplePrefixMatcher>("logs/"));
-        matcher->add(std::make_shared<SimplePrefixMatcher>("accounts.json"));
-        matcher->add(std::make_shared<SimplePrefixMatcher>("accounts/"));
-        matcher->add(std::make_shared<SimplePrefixMatcher>("assets/"));
-        matcher->add(std::make_shared<SimplePrefixMatcher>("icons/"));
-        matcher->add(std::make_shared<SimplePrefixMatcher>("instances/"));
-        matcher->add(std::make_shared<SimplePrefixMatcher>("libraries/"));
-        matcher->add(std::make_shared<SimplePrefixMatcher>("mods/"));
-        matcher->add(std::make_shared<SimplePrefixMatcher>("themes/"));
+        using namespace Filters;
+
+        QList<Filter> filters;
+        filters.append(equals(configFile));
+        filters.append(equals(BuildConfig.LAUNCHER_CONFIGFILE));  // it's possible that we already used that directory before
+        filters.append(startsWith("logs/"));
+        filters.append(equals("accounts.json"));
+        filters.append(startsWith("accounts/"));
+        filters.append(startsWith("assets/"));
+        filters.append(startsWith("icons/"));
+        filters.append(startsWith("instances/"));
+        filters.append(startsWith("libraries/"));
+        filters.append(startsWith("mods/"));
+        filters.append(startsWith("themes/"));
 
         ProgressDialog diag;
-        DataMigrationTask task(oldData, currentData, matcher);
+        DataMigrationTask task(oldData, currentData, any(std::move(filters)));
         if (diag.execWithTask(&task)) {
             qDebug() << "<> Migration succeeded";
             setDoNotMigrate();

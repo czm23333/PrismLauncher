@@ -3,24 +3,20 @@
   stdenv,
   cmake,
   cmark,
-  apple-sdk_11,
   extra-cmake-modules,
   gamemode,
   jdk17,
   kdePackages,
   libnbtplusplus,
-  qt-qrcodegenerator,
   ninja,
+  qrencode,
   self,
   stripJavaArchivesHook,
   tomlplusplus,
   zlib,
   msaClientID ? null,
-  gamemodeSupport ? stdenv.hostPlatform.isLinux,
+  libarchive,
 }:
-assert lib.assertMsg (
-  gamemodeSupport -> stdenv.hostPlatform.isLinux
-) "gamemodeSupport is only available on Linux.";
 
 let
   date =
@@ -63,9 +59,6 @@ stdenv.mkDerivation {
   postUnpack = ''
     rm -rf source/libraries/libnbtplusplus
     ln -s ${libnbtplusplus} source/libraries/libnbtplusplus
-
-    rm -rf source/libraries/qt-qrcodegenerator/QR-Code-generator
-    ln -s ${qt-qrcodegenerator} source/libraries/qt-qrcodegenerator/QR-Code-generator
   '';
 
   nativeBuildInputs = [
@@ -76,35 +69,31 @@ stdenv.mkDerivation {
     stripJavaArchivesHook
   ];
 
-  buildInputs =
-    [
-      cmark
-      kdePackages.qtbase
-      kdePackages.qtnetworkauth
-      kdePackages.quazip
-      tomlplusplus
-      zlib
-    ]
-    ++ lib.optionals stdenv.hostPlatform.isDarwin [ apple-sdk_11 ]
-    ++ lib.optional gamemodeSupport gamemode;
+  buildInputs = [
+    cmark
+    kdePackages.qtbase
+    kdePackages.qtnetworkauth
+    qrencode
+    libarchive
+    tomlplusplus
+    zlib
+  ]
+  ++ lib.optional stdenv.hostPlatform.isLinux gamemode;
 
-  hardeningEnable = lib.optionals stdenv.hostPlatform.isLinux [ "pie" ];
-
-  cmakeFlags =
-    [
-      # downstream branding
-      (lib.cmakeFeature "Launcher_BUILD_PLATFORM" "nixpkgs")
-    ]
-    ++ lib.optionals (msaClientID != null) [
-      (lib.cmakeFeature "Launcher_MSA_CLIENT_ID" (toString msaClientID))
-    ]
-    ++ lib.optionals stdenv.hostPlatform.isDarwin [
-      # we wrap our binary manually
-      (lib.cmakeFeature "INSTALL_BUNDLE" "nodeps")
-      # disable built-in updater
-      (lib.cmakeFeature "MACOSX_SPARKLE_UPDATE_FEED_URL" "''")
-      (lib.cmakeFeature "CMAKE_INSTALL_PREFIX" "${placeholder "out"}/Applications/")
-    ];
+  cmakeFlags = [
+    # downstream branding
+    (lib.cmakeFeature "Launcher_BUILD_PLATFORM" "nixpkgs")
+  ]
+  ++ lib.optionals (msaClientID != null) [
+    (lib.cmakeFeature "Launcher_MSA_CLIENT_ID" (toString msaClientID))
+  ]
+  ++ lib.optionals stdenv.hostPlatform.isDarwin [
+    # we wrap our binary manually
+    (lib.cmakeFeature "INSTALL_BUNDLE" "nodeps")
+    # disable built-in updater
+    (lib.cmakeFeature "MACOSX_SPARKLE_UPDATE_FEED_URL" "''")
+    (lib.cmakeFeature "CMAKE_INSTALL_PREFIX" "${placeholder "out"}/Applications/")
+  ];
 
   doCheck = true;
 

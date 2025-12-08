@@ -38,6 +38,7 @@
 #include "MinecraftInstance.h"
 #include "Application.h"
 #include "BuildConfig.h"
+#include "Json.h"
 #include "QObjectPtr.h"
 #include "minecraft/launch/AutoInstallJava.h"
 #include "minecraft/launch/CreateGameFolders.h"
@@ -52,7 +53,6 @@
 #include "FileSystem.h"
 #include "MMCTime.h"
 #include "java/JavaVersion.h"
-#include "pathmatcher/MultiMatcher.h"
 
 #include "launch/LaunchTask.h"
 #include "launch/TaskStepWrapper.h"
@@ -84,7 +84,6 @@
 #include "AssetsUtils.h"
 #include "MinecraftLoadAndCheck.h"
 #include "PackProfile.h"
-#include "minecraft/gameoptions/GameOptions.h"
 #include "minecraft/update/FoldersTask.h"
 
 #include "tools/BaseProfiler.h"
@@ -104,7 +103,7 @@
 
 #define IBUS "@im=ibus"
 
-static bool switcherooSetupGPU(QProcessEnvironment& env)
+[[maybe_unused]] static bool switcherooSetupGPU(QProcessEnvironment& env)
 {
 #ifdef WITH_QTDBUS
     if (!QDBusConnection::systemBus().isConnected())
@@ -248,6 +247,17 @@ void MinecraftInstance::loadSpecificSettings()
     m_settings->registerSetting("ExportSummary", "");
     m_settings->registerSetting("ExportAuthor", "");
     m_settings->registerSetting("ExportOptionalFiles", true);
+    m_settings->registerSetting("ExportRecommendedRAM");
+
+    auto dataPacksEnabled = m_settings->registerSetting("GlobalDataPacksEnabled", false);
+    auto dataPacksPath = m_settings->registerSetting("GlobalDataPacksPath", "");
+
+    connect(dataPacksEnabled.get(), &Setting::SettingChanged, this, [this] { m_data_pack_list.reset(); });
+    connect(dataPacksPath.get(), &Setting::SettingChanged, this, [this] { m_data_pack_list.reset(); });
+
+    // Join server on launch, this does not have a global override
+    m_settings->registerSetting("OverrideModDownloadLoaders", false);
+    m_settings->registerSetting("ModDownloadLoaders", "[]");
 
     qDebug() << "Instance-type specific settings were loaded!";
 
@@ -389,6 +399,16 @@ QString MinecraftInstance::coreModsDir() const
 QString MinecraftInstance::nilModsDir() const
 {
     return FS::PathCombine(gameRoot(), "nilmods");
+}
+
+QString MinecraftInstance::dataPacksDir()
+{
+    QString relativePath = settings()->get("GlobalDataPacksPath").toString();
+
+    if (relativePath.isEmpty())
+        relativePath = "datapacks";
+
+    return QDir(gameRoot()).filePath(relativePath);
 }
 
 QString MinecraftInstance::resourcePacksDir() const
@@ -615,7 +635,8 @@ QProcessEnvironment MinecraftInstance::createEnvironment()
     }
     // custom env
 
-    auto insertEnv = [&env](QMap<QString, QVariant> envMap) {
+    auto insertEnv = [&env](QString value) {
+        auto envMap = Json::toMap(value);
         if (envMap.isEmpty())
             return;
 
@@ -626,9 +647,9 @@ QProcessEnvironment MinecraftInstance::createEnvironment()
     bool overrideEnv = settings()->get("OverrideEnv").toBool();
 
     if (!overrideEnv)
-        insertEnv(APPLICATION->settings()->get("Env").toMap());
+        insertEnv(APPLICATION->settings()->get("Env").toString());
     else
-        insertEnv(settings()->get("Env").toMap());
+        insertEnv(settings()->get("Env").toString());
     return env;
 }
 
@@ -1242,9 +1263,18 @@ std::shared_ptr<ShaderPackFolderModel> MinecraftInstance::shaderPackList()
     return m_shader_pack_list;
 }
 
+std::shared_ptr<DataPackFolderModel> MinecraftInstance::dataPackList()
+{
+    if (!m_data_pack_list && settings()->get("GlobalDataPacksEnabled").toBool()) {
+        bool isIndexed = !APPLICATION->settings()->get("ModMetadataDisabled").toBool();
+        m_data_pack_list.reset(new DataPackFolderModel(dataPacksDir(), this, isIndexed, true));
+    }
+    return m_data_pack_list;
+}
+
 QList<std::shared_ptr<ResourceFolderModel>> MinecraftInstance::resourceLists()
 {
-    return { loaderModList(), coreModList(), nilModList(), resourcePackList(), texturePackList(), shaderPackList() };
+    return { loaderModList(), coreModList(), nilModList(), resourcePackList(), texturePackList(), shaderPackList(), dataPackList() };
 }
 
 std::shared_ptr<WorldList> MinecraftInstance::worldList()
@@ -1253,14 +1283,6 @@ std::shared_ptr<WorldList> MinecraftInstance::worldList()
         m_world_list.reset(new WorldList(worldDir(), this));
     }
     return m_world_list;
-}
-
-std::shared_ptr<GameOptions> MinecraftInstance::gameOptionsModel()
-{
-    if (!m_game_options) {
-        m_game_options.reset(new GameOptions(FS::PathCombine(gameRoot(), "options.txt")));
-    }
-    return m_game_options;
 }
 
 QList<Mod*> MinecraftInstance::getJarMods() const

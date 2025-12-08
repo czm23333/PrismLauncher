@@ -2,48 +2,56 @@ name: "CodeQL Code Scanning"
 
 on:
   push:
+    branches:
+      - "develop"
+      - "release-*"
     paths:
       # File types
       - "**.cpp"
       - "**.h"
       - "**.java"
+      - "**.ui"
 
       # Directories
-      - "buildconfig/"
-      - "cmake/"
-      - "launcher/"
-      - "libraries/"
-      - "program_info/"
-      - "tests/"
+      - "buildconfig/**"
+      - "cmake/**"
+      - "launcher/**"
+      - "libraries/**"
+      - "program_info/**"
+      - "tests/**"
 
       # Files
       - "CMakeLists.txt"
       - "COPYING.md"
 
       # Workflows
-      - ".github/codeql"
+      - ".github/codeql/**"
       - ".github/workflows/codeql.yml"
+      - ".github/actions/setup-dependencies/**"
   pull_request:
     paths:
       # File types
       - "**.cpp"
       - "**.h"
+      - "**.java"
+      - "**.ui"
 
       # Directories
-      - "buildconfig/"
-      - "cmake/"
-      - "launcher/"
-      - "libraries/"
-      - "program_info/"
-      - "tests/"
+      - "buildconfig/**"
+      - "cmake/**"
+      - "launcher/**"
+      - "libraries/**"
+      - "program_info/**"
+      - "tests/**"
 
       # Files
       - "CMakeLists.txt"
       - "COPYING.md"
 
       # Workflows
-      - ".github/codeql"
+      - ".github/codeql/**"
       - ".github/workflows/codeql.yml"
+      - ".github/actions/setup-dependencies/**"
   workflow_dispatch:
 
 jobs:
@@ -52,12 +60,12 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           submodules: "true"
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
+        uses: github/codeql-action/init@v4
         with:
           config-file: ./.github/codeql/codeql-config.yml
           queries: security-and-quality
@@ -70,8 +78,8 @@ jobs:
 
       - name: Configure and Build
         run: |
-          cmake --preset linux_debug
-          cmake --build --preset linux_debug
+          cmake --preset linux
+          cmake --build --preset linux --config Debug
 
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v3
+        uses: github/codeql-action/analyze@v4

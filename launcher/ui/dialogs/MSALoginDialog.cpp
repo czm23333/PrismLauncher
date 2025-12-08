@@ -36,7 +36,6 @@
 #include "MSALoginDialog.h"
 #include "Application.h"
 
-#include "qr.h"
 #include "ui_MSALoginDialog.h"
 
 #include "DesktopServices.h"
@@ -44,9 +43,14 @@
 
 #include <QApplication>
 #include <QClipboard>
+#include <QColor>
+#include <QPainter>
 #include <QPixmap>
+#include <QSize>
 #include <QUrl>
 #include <QtWidgets/QPushButton>
+
+#include "qrencode.h"
 
 MSALoginDialog::MSALoginDialog(QWidget* parent) : QDialog(parent), ui(new Ui::MSALoginDialog)
 {
@@ -135,13 +139,51 @@ void MSALoginDialog::onTaskFailed(QString reason)
 void MSALoginDialog::authorizeWithBrowser(const QUrl& url)
 {
     ui->stackedWidget2->setCurrentIndex(1);
+    ui->stackedWidget2->adjustSize();
+    ui->stackedWidget2->updateGeometry();
+    this->adjustSize();
     ui->loginButton->setToolTip(QString("<div style='width: 200px;'>%1</div>").arg(url.toString()));
     m_url = url;
+}
+
+void paintQR(QPainter& painter, const QSize canvasSize, const QString& data, QColor fg)
+{
+    const auto* qr = QRcode_encodeString(data.toUtf8().constData(), 0, QRecLevel::QR_ECLEVEL_M, QRencodeMode::QR_MODE_8, 1);
+    if (!qr) {
+        qWarning() << "Unable to encode" << data << "as QR code";
+        return;
+    }
+
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(fg);
+
+    // Make sure the QR code fits in the canvas with some padding
+    const auto qrSize = qr->width;
+    const auto canvasWidth = canvasSize.width();
+    const auto canvasHeight = canvasSize.height();
+    const auto scale = 0.8 * std::min(canvasWidth / qrSize, canvasHeight / qrSize);
+
+    // Find an offset to center it in the canvas
+    const auto offsetX = (canvasWidth - qrSize * scale) / 2;
+    const auto offsetY = (canvasHeight - qrSize * scale) / 2;
+
+    for (int y = 0; y < qrSize; y++) {
+        for (int x = 0; x < qrSize; x++) {
+            auto shouldFillIn = qr->data[y * qrSize + x] & 1;
+            if (shouldFillIn) {
+                QRectF r(offsetX + x * scale, offsetY + y * scale, scale, scale);
+                painter.drawRects(&r, 1);
+            }
+        }
+    }
 }
 
 void MSALoginDialog::authorizeWithBrowserWithExtra(QString url, QString code, [[maybe_unused]] int expiresIn)
 {
     ui->stackedWidget->setCurrentIndex(1);
+    ui->stackedWidget->adjustSize();
+    ui->stackedWidget->updateGeometry();
+    this->adjustSize();
 
     const auto linkString = QString("<a href=\"%1\">%2</a>").arg(url, url);
     if (url == "https://www.microsoft.com/link" && !code.isEmpty()) {
@@ -165,12 +207,18 @@ void MSALoginDialog::authorizeWithBrowserWithExtra(QString url, QString code, [[
 void MSALoginDialog::onDeviceFlowStatus(QString status)
 {
     ui->stackedWidget->setCurrentIndex(0);
+    ui->stackedWidget->adjustSize();
+    ui->stackedWidget->updateGeometry();
+    this->adjustSize();
     ui->status->setText(status);
 }
 
 void MSALoginDialog::onAuthFlowStatus(QString status)
 {
     ui->stackedWidget2->setCurrentIndex(0);
+    ui->stackedWidget2->adjustSize();
+    ui->stackedWidget2->updateGeometry();
+    this->adjustSize();
     ui->status2->setText(status);
 }
 

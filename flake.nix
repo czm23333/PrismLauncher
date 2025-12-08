@@ -15,11 +15,6 @@
       url = "github:PrismLauncher/libnbtplusplus";
       flake = false;
     };
-
-    qt-qrcodegenerator = {
-      url = "github:nayuki/QR-Code-generator";
-      flake = false;
-    };
   };
 
   outputs =
@@ -27,7 +22,6 @@
       self,
       nixpkgs,
       libnbtplusplus,
-      qt-qrcodegenerator,
     }:
 
     let
@@ -175,7 +169,6 @@
         prismlauncher-unwrapped = prev.callPackage ./nix/unwrapped.nix {
           inherit
             libnbtplusplus
-            qt-qrcodegenerator
             self
             ;
         };

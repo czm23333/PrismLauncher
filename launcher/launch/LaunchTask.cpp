@@ -203,8 +203,8 @@ shared_qobject_ptr<LogModel> LaunchTask::getLogModel()
 {
     if (!m_logModel) {
         m_logModel.reset(new LogModel());
-        m_logModel->setMaxLines(m_instance->getConsoleMaxLines());
-        m_logModel->setStopOnOverflow(m_instance->shouldStopOnConsoleOverflow());
+        m_logModel->setMaxLines(getConsoleMaxLines(m_instance->settings()));
+        m_logModel->setStopOnOverflow(shouldStopOnConsoleOverflow(m_instance->settings()));
         // FIXME: should this really be here?
         m_logModel->setOverflowMessage(tr("Stopped watching the game log because the log length surpassed %1 lines.\n"
                                           "You may have to fix your mods because the game is still logging to files and"
@@ -214,7 +214,7 @@ shared_qobject_ptr<LogModel> LaunchTask::getLogModel()
     return m_logModel;
 }
 
-bool LaunchTask::parseXmlLogs(QString const& line, MessageLevel::Enum level)
+bool LaunchTask::parseXmlLogs(QString const& line, MessageLevel level)
 {
     LogParser* parser;
     switch (level) {
@@ -234,62 +234,60 @@ bool LaunchTask::parseXmlLogs(QString const& line, MessageLevel::Enum level)
         auto& model = *getLogModel();
         model.append(MessageLevel::Error, tr("[Log4j Parse Error] Failed to parse log4j log event: %1").arg(err.value().errMessage));
         return false;
-    } else {
-        if (!items.isEmpty()) {
-            auto& model = *getLogModel();
-            for (auto const& item : items) {
-                if (std::holds_alternative<LogParser::LogEntry>(item)) {
-                    auto entry = std::get<LogParser::LogEntry>(item);
-                    auto msg = QString("[%1] [%2/%3] [%4]: %5")
-                                   .arg(entry.timestamp.toString("HH:mm:ss"))
-                                   .arg(entry.thread)
-                                   .arg(entry.levelText)
-                                   .arg(entry.logger)
-                                   .arg(entry.message);
-                    msg = censorPrivateInfo(msg);
-                    model.append(entry.level, msg);
-                } else if (std::holds_alternative<LogParser::PlainText>(item)) {
-                    auto msg = std::get<LogParser::PlainText>(item).message;
-                    level = LogParser::guessLevel(msg, model.previousLevel());
-                    msg = censorPrivateInfo(msg);
-                    model.append(level, msg);
-                }
-            }
+    } 
+
+    if (items.isEmpty())
+        return true;
+
+    auto model = getLogModel();
+    for (auto const& item : items) {
+        if (std::holds_alternative<LogParser::LogEntry>(item)) {
+            auto entry = std::get<LogParser::LogEntry>(item);
+            auto msg = QString("[%1] [%2/%3] [%4]: %5")
+                           .arg(entry.timestamp.toString("HH:mm:ss"))
+                           .arg(entry.thread)
+                           .arg(entry.levelText)
+                           .arg(entry.logger)
+                           .arg(entry.message);
+            msg = censorPrivateInfo(msg);
+            model->append(entry.level, msg);
+        } else if (std::holds_alternative<LogParser::PlainText>(item)) {
+            auto msg = std::get<LogParser::PlainText>(item).message;
+
+            MessageLevel newLevel = messageLevelFromLine(msg);
+
+            if (newLevel == MessageLevel::Unknown)
+                newLevel = LogParser::guessLevel(line);
+
+            if (newLevel == MessageLevel::Unknown)
+                newLevel = model->previousLevel();
+
+            msg = censorPrivateInfo(msg);
+
+            model->append(newLevel, msg);
         }
     }
+
     return true;
 }
 
-void LaunchTask::onLogLines(const QStringList& lines, MessageLevel::Enum defaultLevel)
+void LaunchTask::onLogLines(const QStringList& lines, MessageLevel defaultLevel)
 {
     for (auto& line : lines) {
         onLogLine(line, defaultLevel);
     }
 }
 
-void LaunchTask::onLogLine(QString line, MessageLevel::Enum level)
+void LaunchTask::onLogLine(QString line, MessageLevel level)
 {
     if (parseXmlLogs(line, level)) {
         return;
     }
 
-    // if the launcher part set a log level, use it
-    auto innerLevel = MessageLevel::fromLine(line);
-    if (innerLevel != MessageLevel::Unknown) {
-        level = innerLevel;
-    }
-
-    auto& model = *getLogModel();
-
-    // If the level is still undetermined, guess level
-    if (level == MessageLevel::Unknown) {
-        level = LogParser::guessLevel(line, model.previousLevel());
-    }
-
     // censor private user info
     line = censorPrivateInfo(line);
 
-    model.append(level, line);
+    getLogModel()->append(level, line);
 }
 
 void LaunchTask::emitSucceeded()
